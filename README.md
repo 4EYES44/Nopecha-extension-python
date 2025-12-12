@@ -1,6 +1,6 @@
 
 
-# Nopecha Extension Patcher
+# Nopecha Extension Python
 
   
 
@@ -8,9 +8,7 @@ A Python utility for patching a locally downloaded **Nopecha Chrome Extension** 
 
   
 
-This package is built on top of `chrome_extension_python` and allows you to:
-
-  
+This package is built on top of `chrome_extension_python` and allows you to
 
 - Load your own downloaded Chrome extension folder
 
@@ -19,6 +17,11 @@ This package is built on top of `chrome_extension_python` and allows you to:
 - Patch `.js`, `.html`, and `manifest.json`
 
 - Prepare the extension for Selenium, Botasaurus, or manual Chrome loading
+
+
+##### Here is the link to Download The Extenstion [https://developers.nopecha.com/guides/extension_advanced/#automation-build](Nopecha Enxtenstion)
+
+## Note . You Should Download The chromium_automation.zip 
 
   
 
@@ -30,9 +33,7 @@ This package is built on top of `chrome_extension_python` and allows you to:
 
   
 
-- 🔧 Automatically scans all `.js` files  
-
-- 🔐 Injects API key into config patterns  
+-  This package allows the use of Chrome extensions in Botasaurus, Selenium, and Playwright frameworks.
 
 - 🔐 Just Modify Your "mainfest.json" File
 
@@ -44,7 +45,6 @@ This package is built on top of `chrome_extension_python` and allows you to:
 
   - `NOPECHA_API_KEY`
 
-  - `return e.defaultConfig`
 
 - 🛠 Updates manifest.json (permissions, storage, etc.)  
 
@@ -58,13 +58,13 @@ This package is built on top of `chrome_extension_python` and allows you to:
 
 ## 📦 Installation
 
-  
-
-Once you build the package (or after publishing):
+  install packages using pip:
 
   
 
 ```bash
+
+pip install chrome_extension_python
 
 pip install nopecha-extension
 
@@ -74,11 +74,10 @@ pip install nopecha-extension
   
 ---
 
-
-
 ## 🚀 Usage Example
 
-  
+```
+
 
 from nopecha_extension import Nopecha
 
@@ -88,7 +87,7 @@ from botasaurus.browser import browser, Driver
 
 API_KEY = "YOUR_NOPECHA_KEY"
 
-EXT_PATH = r"C:/path/to/your/nopecha_extension_folder"
+EXT_PATH = r"C:/path/to/your/nopecha_extension_folder" # here you can edit your "mainfest.json" as you want
 
   
 
@@ -109,3 +108,8 @@ ext.extension_path = EXT_PATH
   
 
     )
+
+```
+
+
+  
