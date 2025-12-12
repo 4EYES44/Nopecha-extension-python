@@ -36,17 +36,16 @@ This package is built on top of `chrome_extension_python` and allows you to
 
 ### Here is the link to Download The Extension : [NopeCHA_Extension](https://developers.nopecha.com/guides/extension_advanced/#automation-build)
 
-Here You Can Find The Package In [PyPi](https://pypi.org/project/nopecha-extension/)
 
-  
+---
+
 
 ## Note . You Should Download The chromium_automation.zip
 
   
-
+Here You Can Find The Package In [PyPi](https://pypi.org/project/nopecha-extension/)
   
 
----
 
   
 
@@ -190,4 +189,5 @@ ext.extension_path = EXT_PATH
 
 
 ```
+
 
