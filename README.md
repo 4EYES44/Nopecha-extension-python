@@ -33,8 +33,10 @@ Once you build the package (or after publishing):
 ```bash
 pip install nopecha-extension
 
-## 🚀 Usage Example
 
+---
+
+## 🚀 Usage Example
 
 from nopecha_extension import Nopecha
 from botasaurus.browser import browser, Driver
