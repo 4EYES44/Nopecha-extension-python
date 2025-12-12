@@ -139,9 +139,7 @@ pip install nopecha-extension
 
 from nopecha_extension import Nopecha
 
-  
 
-from botasaurus.browser import browser, Driver
 
   
 
@@ -171,23 +169,12 @@ ext.extension_path = EXT_PATH
 
   
 
-@browser(
-
-  
-
-  
-
-    extensions=[ext],
-
-  
-
-  
-
-    )
+# Your Browser Lib (eg.selenuim , pupteer , playwright)
 
   
 
 
 ```
+
 
 
