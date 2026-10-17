@@ -1,180 +1,89 @@
-  
-  
-
 # Nopecha Extension Python
 
-  
+Write a NopeCHA API key into an unpacked [Automation Build](https://developers.nopecha.com/guides/extension_advanced/#automation-build) (`chromium_automation.zip`).
 
-  
+The Automation Build reads its key from the Nopecha Manifest Config, `manifest["nopecha"]["key"]` in `manifest.json`. This package sets that field and leaves every other manifest field alone, including the top-level `"key"` (the Chrome extension public key). It does not modify JavaScript or HTML, and it does not download the Web Store CRX.
 
-A Python utility for patching a locally downloaded **Nopecha Chrome Extension** by automatically injecting your API key into all required JavaScript, HTML, and config files.
+The API key stays in the process. `load()` does not call `chrome_extension_python`'s storage writer, so the key is not saved in `site-packages/chrome_extension_python/package_storage.json`.
 
-  
-
-  
-
-This package is built on top of `chrome_extension_python` and allows you to
-
-  
-
-- Load your own downloaded Chrome extension folder
-
-  
-
-- Inject your API key into all related files
-
-  
-
-- Patch `.js`, `.html`, and `manifest.json`
-
-  
-
-- Prepare the extension for Selenium, Botasaurus, or manual Chrome loading
-
-  
-  
-
-### Here is the link to Download The Extension : [NopeCHA_Extension](https://developers.nopecha.com/guides/extension_advanced/#automation-build)
-
-
----
-
-
-## Note . You Should Download The chromium_automation.zip
-
-  
-Here You Can Find The Package In [PyPi](https://pypi.org/project/nopecha-extension/)
-  
-
-
-  
-
-  
-
-## ✨ Features
-
-  
-
-  
-
--  This package allows the use of Chrome extensions in Botasaurus, Selenium, and Playwright frameworks.
-
-  
-
-- 🔐 Just Modify Your "mainfest.json" File
-
-  
-
-- 🔍 Detects placeholders like:
-
-  
-
-  - `apiKey: ''`
-
-  
-
-  - `api_key: ""`
-
-  
-
-  - `NOPECHA_API_KEY`
-
-  
-  
-
-- 🛠 Updates manifest.json (permissions, storage, etc.)  
-
-  
-
-- ⚡ Easy integration with Selenium, Botasaurus, or Chrome
-
-  
-
-  
-
----
-
-  
-
-  
-
-## 📦 Installation
-
-  
-
-  install packages using pip:
-
-  
-
-  
+Requires Python 3.8 or newer. The package is published on [PyPI](https://pypi.org/project/nopecha-extension/).
 
 ```bash
-
-  
-
-pip install chrome_extension_python
-
-  
-
 pip install nopecha-extension
-
-  
-
-````
-
-  
-
----
-
-  
-
-## 🚀 Usage Example
-
-  
-
 ```
 
-  
-  
+## Patch the Extension Directory
+
+`extension_path` is the unpacked Automation Build directory. `update_files()` rewrites `manifest.json` only when `manifest["nopecha"]["key"]` differs. A second call with the same key leaves the file unchanged and reports it under `skipped`.
+
+```python
+import os
 
 from nopecha_extension import Nopecha
 
-
-
-  
-
-  
-
-API_KEY = "YOUR_NOPECHA_KEY"
-
-  
-
-EXT_PATH = r"C:/path/to/your/nopecha_extension_folder" # here you can edit your "mainfest.json" as you want
-
-  
-
-  
-
-# Initialize patcher
-
-  
-
-ext = Nopecha(api_key=API_KEY)
-
-  
-
-ext.extension_path = EXT_PATH
-
-  
-
-  
-
-# Your Browser Lib (eg.selenuim , pupteer , playwright)
-
-  
-
-
+ext = Nopecha(
+    api_key=os.environ["NOPECHA_API_KEY"],
+    extension_path="path/to/chromium_automation",
+)
+report = ext.update_files()
+print(report)
 ```
 
+A changed key produces:
 
+```json
+{
+  "modified": [
+    "manifest.json"
+  ],
+  "skipped": [],
+  "errors": []
+}
+```
 
+An empty string, a whitespace-only string, `None`, or any non-string raises `ValueError` (`api_key must be a non-empty string`) before the file is opened for writing.
+
+## Load it in Botasaurus
+
+Install Botasaurus separately (`pip install botasaurus`). Passing the `Nopecha` instance in `extensions` makes Botasaurus call `load()`, which patches `manifest.json` and returns Chrome's `--load-extension` flag. `load()` raises `FileNotFoundError` when `manifest.json` is not in the Extension Directory.
+
+```python
+import os
+
+from botasaurus.browser import Driver, browser
+
+from nopecha_extension import Nopecha
+
+ext = Nopecha(
+    api_key=os.environ["NOPECHA_API_KEY"],
+    extension_path="path/to/chromium_automation",
+)
+
+@browser(extensions=[ext])
+def open_example(driver: Driver, data):
+    driver.get("https://example.com/")
+    driver.prompt()
+
+if __name__ == "__main__":
+    open_example()
+```
+
+`load(with_command_line_option=False)` returns the Extension Directory path instead of the flag.
+
+## Command line
+
+The key is read from the environment or stdin, never from a positional argument. The default is a dry run: nothing is written unless `--write` is passed. `--key-env` defaults to `NOPECHA_API_KEY`.
+
+```bash
+export NOPECHA_API_KEY="YOUR_NOPECHA_KEY"
+
+python -m nopecha_extension.patcher path/to/chromium_automation
+
+python -m nopecha_extension.patcher path/to/chromium_automation --write
+
+python -m nopecha_extension.patcher path/to/chromium_automation --key-env NOPECHA_API_KEY --write
+
+printf '%s\n' "$NOPECHA_API_KEY" | python -m nopecha_extension.patcher path/to/chromium_automation --key-stdin --write
+```
+
+A missing environment variable prints `Environment variable NOPECHA_API_KEY is not set` to stderr and exits with status 2. The manifest is not changed.

@@ -1,205 +1,215 @@
-from chrome_extension_python import Extension
-import re
+from __future__ import annotations
+
+import argparse
 import json
+import os
+import sys
+from typing import Any
+
+from chrome_extension_python import Extension, File, relative_path
+
+_MANIFEST_NAME = "manifest.json"
+_MANIFEST_READ_ERRORS = (OSError, UnicodeError, json.JSONDecodeError, TypeError)
+
+
+def _validated_api_key(api_key: str) -> str:
+    if isinstance(api_key, str) and api_key.strip() != "":
+        return api_key
+    raise ValueError("api_key must be a non-empty string")
+
+
+def _with_nopecha_key(manifest: dict[str, Any], api_key: str) -> dict[str, Any] | None:
+    nopecha_settings = manifest.get("nopecha")
+    if isinstance(nopecha_settings, dict) and nopecha_settings.get("key") == api_key:
+        return None
+
+    if not isinstance(nopecha_settings, dict):
+        nopecha_settings = {}
+    else:
+        nopecha_settings = dict(nopecha_settings)
+    nopecha_settings["key"] = api_key
+
+    updated = dict(manifest)
+    updated["nopecha"] = nopecha_settings
+    return updated
+
+
+def _manifest_read_error(exc: Exception) -> str:
+    if isinstance(exc, FileNotFoundError):
+        return "manifest.json not found"
+    if isinstance(exc, json.JSONDecodeError):
+        return f"manifest.json is not valid JSON: {exc}"
+    if isinstance(exc, TypeError):
+        return str(exc)
+    return f"Failed to read manifest.json: {exc}"
+
 
 class Nopecha(Extension):
-    """
-    Helper class to inject an API key into a downloaded "Nopecha" Chrome extension folder.
+    """Point an unpacked Automation Build at a NopeCHA API key.
 
-    Usage:
-        from nopecha_extension import Nopecha
-        ext = Nopecha(api_key="YOUR_KEY_HERE")
-        ext.update_files()  # will try to patch JS files and manifest/popup files
-
-    Notes:
-    - This class makes a best-effort set of safe textual replacements. Always review and test the output.
-    - It does not change binary files or images.
-    - It attempts several common patterns where an API key might be stored in JS/HTML.
+    The key is written to the Nopecha Manifest Config, ``manifest["nopecha"]["key"]``.
+    It is not passed into ``chrome_extension_python``, so ``load()`` does not
+    persist it in ``package_storage.json``.
     """
 
-    def __init__(self, api_key: str, extension_id: str = "dknlfmjaanfblgfdfebhijalfmhmjjjo", extension_name: str = "NopeCHA"):
-        # fallback extension_id is provided so the base class can be initialized even if you don't know the store id
+    def __init__(
+        self,
+        api_key: str,
+        extension_path: str | os.PathLike[str] | None = None,
+        extension_id: str = "dknlfmjaanfblgfdfebhijalfmhmjjjo",
+        extension_name: str = "NopeCHA",
+    ) -> None:
+        key = _validated_api_key(api_key)
         super().__init__(
             extension_id=extension_id,
             extension_name=extension_name,
-            api_key=api_key,
         )
-        self.api_key = api_key
+        self.api_key = key
+        if extension_path is not None:
+            self.extension_path = extension_path
 
-    def _pattern_replacements(self, content: str, api_key: str) -> str:
-        """Run a set of safe regex replacements to embed the API key into JS/HTML content.
+    @property
+    def extension_path(self) -> str:
+        return self._extension_path
 
-        The order matters: try to match explicit key holders first, then more general patterns.
-        """
-        original = content
+    @extension_path.setter
+    def extension_path(self, extension_path: str | os.PathLike[str]) -> None:
+        path = os.fspath(extension_path)
+        self._extension_path = path
+        if os.path.isabs(path):
+            self.extension_absolute_path = os.path.abspath(path)
+        else:
+            self.extension_absolute_path = relative_path(path)
 
-        # common JS/HTML patterns that might contain an empty API key placeholder
-        replacements = [
-            # JS object style: apiKey: ''  OR apiKey: ""
-            (r"apiKey\s*:\s*['\"]{0,1}['\"]", f"apiKey: '{api_key}'"),
-            (r"apiKey\s*:\s*['\"]{0,1}\s*['\"]", f"apiKey: '{api_key}'"),
+    def get_file(self, path: str) -> File:
+        relative = path.lstrip("/\\")
+        return File(os.path.join(self.extension_absolute_path, relative))
 
-            # explicit placeholder tokens
-            (r"NOPECHA[_-]?API[_-]?KEY", api_key),
-            (r"NOPECHA_APIKEY", api_key),
-            (r"NOPECHA_KEY", api_key),
+    def _api_key_for_patch(self, api_key: str | None) -> str:
+        if api_key is None:
+            return _validated_api_key(self.api_key)
+        return _validated_api_key(api_key)
 
-            # window globals: window.NOPECHA_API_KEY = ''
-            (r"window\.(NOPECHA[_A-Z0-9]*)\s*=\s*['\"].*?['\"]", f"window.\\1 = '{api_key}'"),
+    def _read_manifest(self, relative_manifest_path: str) -> dict[str, Any]:
+        parsed = json.loads(self.get_file(relative_manifest_path).get_contents())
+        if isinstance(parsed, dict):
+            return parsed
+        raise TypeError("manifest.json must contain a JSON object")
 
-            # generic patterns: api_key: '', "api_key":""
-            (r"api_key\s*[:=]\s*['\"].*?['\"]", f"api_key: '{api_key}'"),
+    def _write_manifest(self, manifest: dict[str, Any], relative_manifest_path: str = _MANIFEST_NAME) -> None:
+        rendered = json.dumps(manifest, indent=2) + "\n"
+        self.get_file(relative_manifest_path).write_contents(rendered)
 
-            # some scripts use a defaultConfig return style (like the Capsolver example)
-            (r"return\s+e\.defaultConfig", f"return {{ ...e.defaultConfig, apiKey: '{api_key}' }}"),
-
-            # HTML inputs default value: <input ... value="" data-key-placeholder>
-            (r"(value=)['\"]{0,1}['\"]", f"\1'{api_key}'"),
-        ]
-
-        # apply replacements sequentially; use re.sub with flags to handle multiline
-        updated = content
-        for pat, repl in replacements:
-            try:
-                updated = re.sub(pat, repl, updated, flags=re.IGNORECASE | re.DOTALL)
-            except re.error:
-                # if a pattern is malformed, skip it (shouldn't happen)
-                continue
-
-        # If nothing changed, return original to avoid masking (caller can detect no-change)
-        return updated if updated != original else content
-
-    def update_files(self, api_key: str | None = None) -> dict:
-        """Main entrypoint: update multiple files in the extension.
-
-        Returns a small report dict with which files were touched (best-effort).
-        """
-        api_key = api_key or self.api_key
-        report = {"modified": [], "skipped": [], "errors": []}
-
-        # 1) Update all JS files discovered by the provided helper
+    def _plan_update(self, api_key: str | None) -> tuple[dict[str, list[str]], dict[str, Any] | None]:
+        key = self._api_key_for_patch(api_key)
+        report: dict[str, list[str]] = {"modified": [], "skipped": [], "errors": []}
         try:
-            js_files = self.get_js_files()  # expected helper from the Extension base
-        except Exception as e:
-            js_files = []
-            report['errors'].append(f"get_js_files() failed: {e}")
+            manifest = self._read_manifest(_MANIFEST_NAME)
+        except _MANIFEST_READ_ERRORS as exc:
+            report["errors"].append(_manifest_read_error(exc))
+            return report, None
 
-        for js in js_files:
-            try:
-                def make_updater(content):
-                    new = self._pattern_replacements(content, api_key)
-                    return new
+        updated = _with_nopecha_key(manifest, key)
+        if updated is None:
+            report["skipped"].append(_MANIFEST_NAME)
+            return report, None
 
-                js.update_contents(make_updater)
-                report['modified'].append(js.path if hasattr(js, 'path') else getattr(js, 'name', str(js)))
-            except Exception as e:
-                report['errors'].append(f"Failed to update JS file {getattr(js,'path',str(js))}: {e}")
+        report["modified"].append(_MANIFEST_NAME)
+        return report, updated
 
-        # 2) Update a set of typical files present in a Nopecha download
-        likely_files = [
-            '/popup.js',
-            '/popup.html',
-            '/setup.html',
-            '/background.js',
-            '/eventhook.js',
-            '/locate.js',
-            '/manifest.json',
-        ]
+    def update_files(self, api_key: str | None = None) -> dict[str, list[str]]:
+        """Write the API key into ``manifest.json`` when it differs.
 
-        for path in likely_files:
-            try:
-                file = self.get_file(path)
-            except Exception:
-                report['skipped'].append(path)
-                continue
-
-            try:
-                if path.endswith('.json'):
-                    # manifest.json special handling: attempt to parse and inject "storage" permission
-                    try:
-                        raw = file.get_contents() if hasattr(file, "get_contents") else file.read()
-                        manifest = json.loads(raw)
-                        changed = False
-                        perms = manifest.get('permissions', [])
-                        if 'storage' not in perms:
-                            perms.append('storage')
-                            manifest['permissions'] = perms
-                            changed = True
-
-                        # also ensure host permissions accomodate external API calls if missing
-                        host_perms = manifest.get('host_permissions', [])
-                        if host_perms and 'https://*/*' not in host_perms:
-                            host_perms.append('https://*/*')
-                            manifest['host_permissions'] = host_perms
-                            changed = True
-
-                        # Automation builds load the API key from manifest["nopecha"]["key"].
-                        nopecha_settings = manifest.get("nopecha")
-                        if isinstance(nopecha_settings, dict):
-                            nopecha_settings["key"] = api_key
-                            changed = True
-
-                        if changed:
-                            # write back prettified JSON
-                            new_content = json.dumps(manifest, indent=2)
-                            file.update_contents(lambda _c, nc=new_content: nc)
-                            report['modified'].append(path)
-                        else:
-                            report['skipped'].append(path)
-                    except Exception:
-                        # fallback to regex replacement if JSON parse fails
-                        file.update_contents(lambda c: self._pattern_replacements(c, api_key))
-                        report['modified'].append(path)
-                else:
-                    file.update_contents(lambda c: self._pattern_replacements(c, api_key))
-                    report['modified'].append(path)
-            except Exception as e:
-                report['errors'].append(f"Failed to patch {path}: {e}")
-
-        # 3) Final helpful tweak: if popup.html contains an input for the API key, set its value
-        try:
-            popup = self.get_file('/popup.html')
-            def popup_updater(content):
-                # try to set a known input id or name
-                content2 = re.sub(r"(<input[^>]+id=['\"]?(apiKey|nopecha-key|apikey)['\"]?[^>]*value=['\"]).*?(['\"])",
-                                  rf"\1{api_key}\3",
-                                  content,
-                                  flags=re.IGNORECASE|re.DOTALL)
-                # fallback: replace placeholder text
-                content2 = content2.replace('NOPECHA_API_KEY', api_key)
-                return content2
-
-            popup.update_contents(popup_updater)
-            report['modified'].append('/popup.html')
-        except Exception:
-            pass
-
+        A matching ``manifest["nopecha"]["key"]`` leaves the file untouched.
+        """
+        report, updated = self._plan_update(api_key)
+        if updated is not None:
+            self._write_manifest(updated)
         return report
 
-    def quick_patch_file(self, path: str, api_key: str | None = None) -> bool:
-        """Convenience: patch a single file path. Returns True if patched without exception.
-        """
-        api_key = api_key or self.api_key
-        try:
-            file = self.get_file(path)
-        except Exception:
+    def quick_patch_file(self, path: str = _MANIFEST_NAME, api_key: str | None = None) -> bool:
+        """Patch one ``manifest.json``. Return False when the path or file cannot be patched."""
+        relative_manifest_path = path.lstrip("/\\")
+        if os.path.basename(relative_manifest_path) != _MANIFEST_NAME:
             return False
-
+        key = self._api_key_for_patch(api_key)
         try:
-            file.update_contents(lambda c: self._pattern_replacements(c, api_key))
-            return True
-        except Exception:
+            updated = _with_nopecha_key(self._read_manifest(relative_manifest_path), key)
+            if updated is not None:
+                self._write_manifest(updated, relative_manifest_path)
+        except _MANIFEST_READ_ERRORS:
             return False
+        return True
+
+    def load(self, with_command_line_option: bool = True) -> str:
+        manifest_path = os.path.join(self.extension_absolute_path, _MANIFEST_NAME)
+        if not os.path.isfile(manifest_path):
+            raise FileNotFoundError(manifest_path)
+        self.update_files(api_key=self.api_key)
+        if with_command_line_option:
+            return f"--load-extension={self.extension_absolute_path}"
+        return self.extension_absolute_path
 
 
-# If the user executes this file directly as a small test harness, do a dry-run style report.
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='Nopecha extension patcher (dry-run).')
-    parser.add_argument('api_key', help='Nopecha API key to inject')
-    args = parser.parse_args()
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Write an API key into the NopeCHA Automation Build manifest.json."
+    )
+    parser.add_argument(
+        "extension_dir",
+        help="Path to the unpacked Automation Build directory",
+    )
+    parser.add_argument(
+        "--key-env",
+        default="NOPECHA_API_KEY",
+        help="Environment variable holding the API key (default: NOPECHA_API_KEY)",
+    )
+    parser.add_argument(
+        "--key-stdin",
+        action="store_true",
+        help="Read the API key from stdin",
+    )
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="Write manifest.json. Omit this flag for a dry run",
+    )
+    return parser
 
-    ext = Nopecha(args.api_key)
-    report = ext.update_files()
-    print('Patch report:')
+
+def _cli_api_key(read_stdin: bool, env_name: str) -> str:
+    if read_stdin:
+        api_key = sys.stdin.read()
+        if api_key.endswith("\r\n"):
+            api_key = api_key[:-2]
+        elif api_key.endswith("\n"):
+            api_key = api_key[:-1]
+        return api_key
+    try:
+        return os.environ[env_name]
+    except KeyError as exc:
+        raise ValueError(f"Environment variable {env_name} is not set") from exc
+
+
+def _run_cli(read_stdin: bool, env_name: str, extension_dir: str, write: bool) -> dict[str, list[str]]:
+    api_key = _validated_api_key(_cli_api_key(read_stdin, env_name))
+    extension = Nopecha(api_key=api_key, extension_path=extension_dir)
+    if write:
+        return extension.update_files()
+    report, _updated_manifest = extension._plan_update(None)
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    try:
+        report = _run_cli(args.key_stdin, args.key_env, args.extension_dir, args.write)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     print(json.dumps(report, indent=2))
+    return 1 if report["errors"] else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
