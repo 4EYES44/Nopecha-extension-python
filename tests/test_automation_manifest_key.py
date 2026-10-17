@@ -139,6 +139,49 @@ class AutomationManifestKeyTest(unittest.TestCase):
             written = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(written["nopecha"]["key"], api_key)
 
+    def test_update_files_enables_all_captcha_types(self):
+        api_key = "already-set"
+        manifest = json.loads(json.dumps(AUTOMATION_MANIFEST))
+        manifest["nopecha"] = {
+            "key": api_key,
+            "keys": [],
+            "enabled": False,
+            "disabled_hosts": [],
+            "hcaptcha_auto_solve": True,
+            "hcaptcha_auto_open": False,
+            "recaptcha_auto_solve": False,
+            "recaptcha_auto_open": False,
+            "awscaptcha_auto_solve": False,
+            "awscaptcha_auto_open": False,
+            "funcaptcha_auto_solve": False,
+            "funcaptcha_auto_open": False,
+            "geetest_auto_solve": False,
+            "geetest_auto_open": False,
+            "lemincaptcha_auto_solve": False,
+            "lemincaptcha_auto_open": False,
+            "perimeterx_auto_solve": False,
+            "textcaptcha_auto_solve": False,
+            "turnstile_auto_solve": False,
+            "hcaptcha_solve_delay_time": 3000,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            extension_dir = Path(tmp)
+            manifest_path = self._make_extension(extension_dir, manifest)
+            report = Nopecha(api_key=api_key, extension_path=extension_dir).update_files()
+            written = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self._assert_scripts_untouched(extension_dir)
+
+        self.assertEqual(report["modified"], ["manifest.json"])
+        self.assertEqual(written["nopecha"]["key"], api_key)
+        self.assertEqual(written["nopecha"]["keys"], [])
+        self.assertEqual(written["nopecha"]["disabled_hosts"], [])
+        self.assertEqual(written["nopecha"]["hcaptcha_solve_delay_time"], 3000)
+        self.assertIs(written["nopecha"]["enabled"], True)
+        self.assertEqual(written["key"], AUTOMATION_MANIFEST["key"])
+        for name, value in written["nopecha"].items():
+            if name.endswith("_auto_solve") or name.endswith("_auto_open"):
+                self.assertIs(value, True, name)
+
     def test_missing_or_non_dict_nopecha_settings_become_a_dict(self):
         cases = (
             {k: v for k, v in AUTOMATION_MANIFEST.items() if k != "nopecha"},
@@ -154,7 +197,10 @@ class AutomationManifestKeyTest(unittest.TestCase):
                 self.assertEqual(written["nopecha"]["key"], "sub_test_key")
                 self.assertEqual(written["key"], AUTOMATION_MANIFEST["key"])
                 if manifest.get("nopecha") == "not-a-dict":
-                    self.assertEqual(written["nopecha"], {"key": "sub_test_key"})
+                    self.assertEqual(
+                        written["nopecha"],
+                        {"enabled": True, "key": "sub_test_key"},
+                    )
 
     def test_extension_path_resolves_absolute_and_relative_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
