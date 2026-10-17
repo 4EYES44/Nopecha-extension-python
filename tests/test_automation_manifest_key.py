@@ -232,6 +232,21 @@ class AutomationManifestKeyTest(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 ext.load()
 
+    def test_load_raises_when_manifest_json_cannot_be_patched(self):
+        for payload in ("{not json", "[]"):
+            with self.subTest(payload=payload):
+                with tempfile.TemporaryDirectory() as tmp:
+                    extension_dir = Path(tmp)
+                    (extension_dir / "manifest.json").write_text(payload, encoding="utf-8")
+                    ext = Nopecha(api_key="sub_test_key", extension_path=extension_dir)
+
+                    def fail_download() -> None:
+                        raise AssertionError("download() must not be called")
+
+                    ext.download = fail_download
+                    with self.assertRaises((ValueError, TypeError, OSError)):
+                        ext.load()
+
     def test_quick_patch_file_only_updates_manifest_json(self):
         api_key = "quick-patch-key"
         with tempfile.TemporaryDirectory() as tmp:
@@ -325,6 +340,35 @@ class PatcherCliTest(unittest.TestCase):
             saved = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["nopecha"]["key"], SPECIAL_KEY)
             self.assertNotIn(SPECIAL_KEY, from_stdin.stdout)
+
+    def test_read_only_manifest_write_is_reported(self):
+        if os.geteuid() == 0:
+            self.skipTest("mode 0o444 does not block writes when running as root")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            extension_dir = Path(tmp)
+            manifest_path = extension_dir / "manifest.json"
+            manifest_path.write_text(json.dumps(AUTOMATION_MANIFEST), encoding="utf-8")
+            original_mode = manifest_path.stat().st_mode
+            original = manifest_path.read_bytes()
+            manifest_path.chmod(0o444)
+            try:
+                report = Nopecha(api_key="sub_test_key", extension_path=extension_dir).update_files()
+                self.assertEqual(report["modified"], [])
+                self.assertTrue(report["errors"])
+                self.assertEqual(manifest_path.read_bytes(), original)
+
+                completed = self._run_cli(
+                    [str(extension_dir), "--write"],
+                    self._cli_env(NOPECHA_API_KEY="sub_test_key"),
+                )
+                self.assertEqual(completed.returncode, 1, completed.stderr)
+                cli_report = json.loads(completed.stdout)
+                self.assertEqual(cli_report["modified"], [])
+                self.assertTrue(cli_report["errors"])
+                self.assertEqual(manifest_path.read_bytes(), original)
+            finally:
+                manifest_path.chmod(original_mode)
 
     def test_missing_key_or_extra_positional_does_not_write(self):
         with tempfile.TemporaryDirectory() as tmp:

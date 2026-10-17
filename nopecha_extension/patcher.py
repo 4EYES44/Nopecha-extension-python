@@ -100,31 +100,38 @@ class Nopecha(Extension):
         rendered = json.dumps(manifest, indent=2) + "\n"
         self.get_file(relative_manifest_path).write_contents(rendered)
 
-    def _plan_update(self, api_key: str | None) -> tuple[dict[str, list[str]], dict[str, Any] | None]:
+    def _manifest_for_write(self, api_key: str | None) -> dict[str, Any] | None:
         key = self._api_key_for_patch(api_key)
+        return _with_nopecha_key(self._read_manifest(_MANIFEST_NAME), key)
+
+    def _plan_update(self, api_key: str | None) -> tuple[dict[str, list[str]], dict[str, Any] | None]:
         report: dict[str, list[str]] = {"modified": [], "skipped": [], "errors": []}
         try:
-            manifest = self._read_manifest(_MANIFEST_NAME)
+            updated = self._manifest_for_write(api_key)
         except _MANIFEST_READ_ERRORS as exc:
             report["errors"].append(_manifest_read_error(exc))
             return report, None
 
-        updated = _with_nopecha_key(manifest, key)
         if updated is None:
             report["skipped"].append(_MANIFEST_NAME)
             return report, None
-
-        report["modified"].append(_MANIFEST_NAME)
         return report, updated
 
     def update_files(self, api_key: str | None = None) -> dict[str, list[str]]:
         """Write the API key into ``manifest.json`` when it differs.
 
         A matching ``manifest["nopecha"]["key"]`` leaves the file untouched.
+        ``manifest.json`` is listed in ``modified`` only after a successful write.
         """
         report, updated = self._plan_update(api_key)
-        if updated is not None:
+        if updated is None:
+            return report
+        try:
             self._write_manifest(updated)
+        except OSError as exc:
+            report["errors"].append(f"Failed to write manifest.json: {exc}")
+            return report
+        report["modified"].append(_MANIFEST_NAME)
         return report
 
     def quick_patch_file(self, path: str = _MANIFEST_NAME, api_key: str | None = None) -> bool:
@@ -142,10 +149,18 @@ class Nopecha(Extension):
         return True
 
     def load(self, with_command_line_option: bool = True) -> str:
+        """Patch ``manifest.json`` and return the Chrome load flag.
+
+        Raises ``FileNotFoundError`` when the manifest is missing. Read and write
+        failures propagate (``ValueError``, ``TypeError``, or ``OSError``) instead
+        of returning a path for an unpatched manifest.
+        """
         manifest_path = os.path.join(self.extension_absolute_path, _MANIFEST_NAME)
         if not os.path.isfile(manifest_path):
             raise FileNotFoundError(manifest_path)
-        self.update_files(api_key=self.api_key)
+        updated = self._manifest_for_write(self.api_key)
+        if updated is not None:
+            self._write_manifest(updated)
         if with_command_line_option:
             return f"--load-extension={self.extension_absolute_path}"
         return self.extension_absolute_path
@@ -196,7 +211,9 @@ def _run_cli(read_stdin: bool, env_name: str, extension_dir: str, write: bool) -
     extension = Nopecha(api_key=api_key, extension_path=extension_dir)
     if write:
         return extension.update_files()
-    report, _updated_manifest = extension._plan_update(None)
+    report, updated_manifest = extension._plan_update(None)
+    if updated_manifest is not None:
+        report["modified"].append(_MANIFEST_NAME)
     return report
 
 
