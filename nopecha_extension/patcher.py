@@ -250,9 +250,16 @@ class Nopecha(Extension):
             return name.strip()
         return None
 
+    def _pinned_release_tag(self) -> str | None:
+        if not isinstance(self.version, str):
+            return None
+        tag = _normalized_version(self.version)
+        return tag or None
+
     def _desired_tag(self) -> str:
-        if self.version:
-            return self.version
+        tag = self._pinned_release_tag()
+        if tag is not None:
+            return tag
         return _latest_release_tag()
 
     def _cache_is_stale(self) -> bool:
@@ -262,8 +269,9 @@ class Nopecha(Extension):
         return _normalized_version(cached) != _normalized_version(self._desired_tag())
 
     def _automation_zip_url(self) -> str:
-        if self.version:
-            return _AUTOMATION_ZIP_TAG.format(tag=self.version)
+        tag = self._pinned_release_tag()
+        if tag is not None:
+            return _AUTOMATION_ZIP_TAG.format(tag=tag)
         return _AUTOMATION_ZIP_LATEST
 
     def download(self) -> None:

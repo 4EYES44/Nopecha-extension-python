@@ -187,6 +187,45 @@ class AutomationBuildDownloadTest(unittest.TestCase):
         ])
         self.assertEqual(written["nopecha"]["key"], "sub_test_key")
 
+    def test_load_pinned_v_prefixed_version_fetches_unprefixed_release_tag(self):
+        zip_bytes = _automation_zip()
+        fetched: list[str] = []
+
+        def fake_fetch_bytes(url: str) -> bytes:
+            fetched.append(url)
+            return zip_bytes
+
+        with _in_temp_cwd():
+            with patch("nopecha_extension.patcher._fetch_bytes", fake_fetch_bytes):
+                ext = Nopecha(api_key="sub_test_key", version="v0.6.1")
+                ext.load(with_command_line_option=False)
+
+        self.assertEqual(fetched, [
+            "https://github.com/NopeCHALLC/nopecha-extension/releases/download/"
+            "0.6.1/chromium_automation.zip"
+        ])
+
+    def test_load_whitespace_only_version_fetches_latest_automation_build(self):
+        zip_bytes = _automation_zip()
+        fetched: list[str] = []
+
+        def fake_fetch_bytes(url: str) -> bytes:
+            fetched.append(url)
+            return zip_bytes
+
+        with _in_temp_cwd():
+            with patch("nopecha_extension.patcher._fetch_bytes", fake_fetch_bytes), patch(
+                "nopecha_extension.patcher._fetch_json",
+                return_value={"tag_name": "0.6.1"},
+            ):
+                ext = Nopecha(api_key="sub_test_key", version="   ")
+                ext.load(with_command_line_option=False)
+
+        self.assertEqual(fetched, [
+            "https://github.com/NopeCHALLC/nopecha-extension/releases/latest/download/"
+            "chromium_automation.zip"
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()
